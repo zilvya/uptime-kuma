@@ -1100,6 +1100,66 @@ let needSetup = false;
             }
         });
 
+        socket.on("pauseMonitors", async (monitorIDList, callback) => {
+            try {
+                checkLogin(socket);
+
+                if (!Array.isArray(monitorIDList) || monitorIDList.length === 0) {
+                    callback({
+                        ok: false,
+                        msg: "No monitors selected",
+                    });
+                    return;
+                }
+
+                const count = await pauseMonitors(socket.userID, monitorIDList);
+
+                await server.sendMonitorList(socket);
+
+                callback({
+                    ok: true,
+                    count,
+                    msg: "pausedMonitorsMsg",
+                    msgi18n: true,
+                });
+            } catch (e) {
+                callback({
+                    ok: false,
+                    msg: e.message,
+                });
+            }
+        });
+
+        socket.on("resumeMonitors", async (monitorIDList, callback) => {
+            try {
+                checkLogin(socket);
+
+                if (!Array.isArray(monitorIDList) || monitorIDList.length === 0) {
+                    callback({
+                        ok: false,
+                        msg: "No monitors selected",
+                    });
+                    return;
+                }
+
+                const count = await resumeMonitors(socket.userID, monitorIDList);
+
+                await server.sendMonitorList(socket);
+
+                callback({
+                    ok: true,
+                    count,
+                    msg: "resumedMonitorsMsg",
+                    msgi18n: true,
+                });
+            } catch (e) {
+                callback({
+                    ok: false,
+                    msg: e.message,
+                });
+            }
+        });
+
         socket.on("deleteMonitor", async (monitorID, deleteChildren, callback) => {
             try {
                 // Backward compatibility: if deleteChildren is omitted, the second parameter is the callback
@@ -1918,6 +1978,74 @@ async function pauseMonitor(userID, monitorID) {
         await server.monitorList[monitorID].stop();
         server.monitorList[monitorID].active = 0;
     }
+}
+
+/**
+ * Pause multiple monitors at once
+ * @param {number} userID ID of user who owns monitors
+ * @param {number[]} monitorIDList Array of monitor IDs to pause
+ * @returns {Promise<number>} Number of monitors successfully paused
+ */
+async function pauseMonitors(userID, monitorIDList) {
+    if (!monitorIDList || monitorIDList.length === 0) {
+        return 0;
+    }
+
+    log.info("manage", `Pause Monitors: ${monitorIDList.join(", ")} User ID: ${userID}`);
+
+    const slots = monitorIDList.map(() => "?").join(",");
+    const sqlParams = [...monitorIDList, userID];
+
+    await R.exec(`UPDATE monitor SET active = 0 WHERE id IN (${slots}) AND user_id = ?`, sqlParams);
+
+    let pausedCount = 0;
+    for (const monitorID of monitorIDList) {
+        if (monitorID in server.monitorList) {
+            await server.monitorList[monitorID].stop();
+            server.monitorList[monitorID].active = 0;
+            pausedCount++;
+        }
+    }
+
+    return pausedCount;
+}
+
+/**
+ * Resume multiple monitors at once
+ * @param {number} userID ID of user who owns monitors
+ * @param {number[]} monitorIDList Array of monitor IDs to resume
+ * @returns {Promise<number>} Number of monitors successfully resumed
+ */
+async function resumeMonitors(userID, monitorIDList) {
+    if (!monitorIDList || monitorIDList.length === 0) {
+        return 0;
+    }
+
+    log.info("manage", `Resume Monitors: ${monitorIDList.join(", ")} User ID: ${userID}`);
+
+    const slots = monitorIDList.map(() => "?").join(",");
+    const sqlParams = [...monitorIDList, userID];
+
+    await R.exec(`UPDATE monitor SET active = 1 WHERE id IN (${slots}) AND user_id = ?`, sqlParams);
+
+    let resumedCount = 0;
+    for (const monitorID of monitorIDList) {
+        try {
+            const monitor = await R.findOne("monitor", " id = ? AND user_id = ? ", [monitorID, userID]);
+            if (monitor) {
+                if (monitor.id in server.monitorList) {
+                    await server.monitorList[monitor.id].stop();
+                }
+                server.monitorList[monitor.id] = monitor;
+                await monitor.start(io);
+                resumedCount++;
+            }
+        } catch (e) {
+            log.error("monitor", `Failed to resume monitor ${monitorID}:`, e);
+        }
+    }
+
+    return resumedCount;
 }
 
 /**

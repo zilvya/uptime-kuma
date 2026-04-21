@@ -60,6 +60,7 @@
                             :disabled="bulkActionInProgress"
                             aria-expanded="false"
                         >
+                            <span v-if="bulkActionInProgress" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                             {{ $t("Actions") }}
                         </button>
                         <ul class="dropdown-menu">
@@ -431,10 +432,10 @@ export default {
             this.$refs.confirmPause.show();
         },
         /**
-         * Pause each selected monitor
-         * @returns {void}
+         * Pause each selected monitor using bulk API
+         * @returns {Promise<void>}
          */
-        pauseSelected() {
+        async pauseSelected() {
             if (this.bulkActionInProgress) {
                 return;
             }
@@ -447,16 +448,33 @@ export default {
             }
 
             this.bulkActionInProgress = true;
-            activeMonitors.forEach((id) => this.$root.getSocket().emit("pauseMonitor", id, () => {}));
-            this.$root.toastSuccess(this.$t("pausedMonitorsMsg", activeMonitors.length));
-            this.bulkActionInProgress = false;
-            this.cancelSelectMode();
+
+            try {
+                const activeMonitorIds = activeMonitors.map((id) => parseInt(id));
+
+                await new Promise((resolve, reject) => {
+                    this.$root.getSocket().emit("pauseMonitors", activeMonitorIds, (res) => {
+                        if (res.ok) {
+                            resolve(res);
+                        } else {
+                            reject(res);
+                        }
+                    });
+                });
+
+                this.$root.toastSuccess(this.$t("pausedMonitorsMsg", activeMonitors.length));
+            } catch (error) {
+                this.$root.toastError(error.msg || "Failed to pause monitors");
+            } finally {
+                this.bulkActionInProgress = false;
+                this.cancelSelectMode();
+            }
         },
         /**
-         * Resume each selected monitor
-         * @returns {void}
+         * Resume each selected monitor using bulk API
+         * @returns {Promise<void>}
          */
-        resumeSelected() {
+        async resumeSelected() {
             if (this.bulkActionInProgress) {
                 return;
             }
@@ -471,10 +489,27 @@ export default {
             }
 
             this.bulkActionInProgress = true;
-            inactiveMonitors.forEach((id) => this.$root.getSocket().emit("resumeMonitor", id, () => {}));
-            this.$root.toastSuccess(this.$t("resumedMonitorsMsg", inactiveMonitors.length));
-            this.bulkActionInProgress = false;
-            this.cancelSelectMode();
+
+            try {
+                const inactiveMonitorIds = inactiveMonitors.map((id) => parseInt(id));
+
+                await new Promise((resolve, reject) => {
+                    this.$root.getSocket().emit("resumeMonitors", inactiveMonitorIds, (res) => {
+                        if (res.ok) {
+                            resolve(res);
+                        } else {
+                            reject(res);
+                        }
+                    });
+                });
+
+                this.$root.toastSuccess(this.$t("resumedMonitorsMsg", inactiveMonitors.length));
+            } catch (error) {
+                this.$root.toastError(error.msg || "Failed to resume monitors");
+            } finally {
+                this.bulkActionInProgress = false;
+                this.cancelSelectMode();
+            }
         },
         /**
          * Delete each selected monitor
